@@ -1,6 +1,6 @@
 import { data, redirect } from "react-router";
 import { z } from "zod";
-import type { Route } from "./+types/courses.$slug.refund";
+import type { Route } from "./+types/courses.$slug.purchase-cancellation";
 import { getCurrentUserId } from "~/lib/session";
 import { db } from "~/db";
 import {
@@ -9,24 +9,24 @@ import {
   lessons,
   modules,
   purchases,
-  refunds,
+  purchaseCancellationRequests,
   users,
   videoWatchEvents,
-  RefundStatus,
+  PurchaseCancellationRequestStatus,
 } from "~/db/schema";
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { parseFormData, parseParams } from "~/lib/validation";
 import { getDiscountForCountry } from "~/lib/ppp";
 import { formatPrice } from "~/lib/utils";
 
-const REFUND_WINDOW_DAYS = 14;
+const PURCHASE_CANCELLATION_WINDOW_DAYS = 14;
 const MAX_WATCHED_HOURS = 2;
 
-const refundParamsSchema = z.object({
+const purchaseCancellationParamsSchema = z.object({
   slug: z.string().min(1),
 });
 
-const refundActionSchema = z.object({
+const purchaseCancellationActionSchema = z.object({
   reason: z
     .string()
     .trim()
@@ -58,14 +58,17 @@ function getLessonIdsForCourse(courseId: number): number[] {
   return rows.map((row) => row.id);
 }
 
-function getOpenRefund(purchaseId: number) {
+function getPendingPurchaseCancellationRequest(purchaseId: number) {
   return db
     .select()
-    .from(refunds)
+    .from(purchaseCancellationRequests)
     .where(
       and(
-        eq(refunds.purchaseId, purchaseId),
-        eq(refunds.status, RefundStatus.Requested)
+        eq(purchaseCancellationRequests.purchaseId, purchaseId),
+        eq(
+          purchaseCancellationRequests.status,
+          PurchaseCancellationRequestStatus.Requested
+        )
       )
     )
     .get();
@@ -81,7 +84,7 @@ function calendarDay(when: Date): string {
 
 function lastDayOfWindow(purchasedAtIso: string): string {
   const deadline = new Date(purchasedAtIso);
-  deadline.setDate(deadline.getDate() + REFUND_WINDOW_DAYS);
+  deadline.setDate(deadline.getDate() + PURCHASE_CANCELLATION_WINDOW_DAYS);
   return calendarDay(deadline);
 }
 
@@ -89,7 +92,7 @@ function lastDayOfWindow(purchasedAtIso: string): string {
  * The confirmation the learner gets in their inbox. There is no mail
  * transport wired up yet, so the built message goes to the server log.
  */
-function buildReversalEmail(input: {
+function buildPurchaseCancellationRequestEmail(input: {
   learnerName: string;
   learnerEmail: string;
   courseTitle: string;
@@ -97,14 +100,14 @@ function buildReversalEmail(input: {
 }) {
   return {
     to: input.learnerEmail,
-    subject: `Reversal requested — ${input.courseTitle}`,
+    subject: `Purchase cancellation requested — ${input.courseTitle}`,
     body: [
       `Hi ${input.learnerName},`,
       "",
-      `We have your Reversal request for "${input.courseTitle}".`,
-      `The Reversal is for ${formatPrice(input.amount)}, the amount you paid.`,
+      `We have your purchase cancellation request for "${input.courseTitle}".`,
+      `The amount requested is ${formatPrice(input.amount)}. If approved, this amount will be returned to the card you paid with.`,
       "",
-      "Our team reviews every Reversal by hand. You do not need to do anything else — we will email you again when it is done.",
+      "Your purchase cancellation request is awaiting review. Your purchase has not yet been cancelled. You do not need to do anything else — we will email you again with the decision.",
       "",
       "— The Cadence team",
     ].join("\n"),
@@ -118,7 +121,7 @@ export async function action({ params, request }: Route.ActionArgs) {
     throw data("You must be logged in to cancel a purchase.", { status: 401 });
   }
 
-  const { slug } = parseParams(params, refundParamsSchema);
+  const { slug } = parseParams(params, purchaseCancellationParamsSchema);
   const course = getCourseBySlug(slug);
 
   if (!course) {
@@ -141,10 +144,13 @@ export async function action({ params, request }: Route.ActionArgs) {
     throw data("You have not bought this course.", { status: 403 });
   }
 
-  if (getOpenRefund(purchase.id)) {
-    throw data("You already have a request open on this purchase.", {
-      status: 409,
-    });
+  if (getPendingPurchaseCancellationRequest(purchase.id)) {
+    throw data(
+      "You already have a purchase cancellation request awaiting review for this purchase.",
+      {
+        status: 409,
+      }
+    );
   }
 
   // A seat that came out of a team licence, and has been claimed, belongs to
@@ -162,12 +168,16 @@ export async function action({ params, request }: Route.ActionArgs) {
   }
 
   const today = calendarDay(new Date());
-  const withinRefundWindow = today <= lastDayOfWindow(purchase.createdAt);
+  const withinPurchaseCancellationWindow =
+    today <= lastDayOfWindow(purchase.createdAt);
 
-  if (!withinRefundWindow) {
-    throw data(`The ${REFUND_WINDOW_DAYS}-day window has closed.`, {
-      status: 403,
-    });
+  if (!withinPurchaseCancellationWindow) {
+    throw data(
+      `The ${PURCHASE_CANCELLATION_WINDOW_DAYS}-day window has closed.`,
+      {
+        status: 403,
+      }
+    );
   }
 
   const courseLessonIds = getLessonIdsForCourse(course.id);
@@ -206,32 +216,29 @@ export async function action({ params, request }: Route.ActionArgs) {
   const refundableAmount = pppDiscount > 0 ? purchase.amountPaid : course.price;
 
   const formData = await request.formData();
-  const parsed = parseFormData(formData, refundActionSchema);
+  const parsed = parseFormData(formData, purchaseCancellationActionSchema);
 
   if (!parsed.success) {
     return data({ errors: parsed.errors }, { status: 400 });
   }
 
-  db
-    .insert(refunds)
+  db.insert(purchaseCancellationRequests)
     .values({
       purchaseId: purchase.id,
-      status: RefundStatus.Requested,
+      status: PurchaseCancellationRequestStatus.Requested,
       reason: parsed.data.reason,
     })
     .returning()
     .get();
 
-  const email = buildReversalEmail({
+  const email = buildPurchaseCancellationRequestEmail({
     learnerName: learner.name,
     learnerEmail: learner.email,
     courseTitle: course.title,
     amount: refundableAmount,
   });
 
-  console.log(
-    `[email] to=${email.to} subject=${email.subject}\n${email.body}`
-  );
+  console.log(`[email] to=${email.to} subject=${email.subject}\n${email.body}`);
 
   return redirect("/settings");
 }

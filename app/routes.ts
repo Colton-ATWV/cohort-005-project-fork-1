@@ -13,7 +13,10 @@ export default [
     route("courses/:slug", "routes/courses.$slug.tsx"),
     route("courses/:slug/:moduleId", "routes/courses.$slug.$moduleId.tsx"),
     route("courses/:slug/purchase", "routes/courses.$slug.purchase.tsx"),
-    route("courses/:slug/refund", "routes/courses.$slug.refund.ts"),
+    route(
+      "courses/:slug/purchase-cancellation",
+      "routes/courses.$slug.purchase-cancellation.ts"
+    ),
     route("courses/:slug/welcome", "routes/courses.$slug.welcome.tsx"),
     route(
       "courses/:slug/lessons/:lessonId",

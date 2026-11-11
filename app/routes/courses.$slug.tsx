@@ -16,10 +16,10 @@ import {
   courseRatings,
   purchases,
   coupons,
-  refunds,
+  purchaseCancellationRequests,
   videoWatchEvents,
   LessonProgressStatus,
-  RefundStatus,
+  PurchaseCancellationRequestStatus,
 } from "~/db/schema";
 import { eq, and, or, sql, inArray, isNotNull } from "drizzle-orm";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
@@ -307,7 +307,10 @@ function findRating(userId: number, courseId: number) {
     .select()
     .from(courseRatings)
     .where(
-      and(eq(courseRatings.userId, userId), eq(courseRatings.courseId, courseId))
+      and(
+        eq(courseRatings.userId, userId),
+        eq(courseRatings.courseId, courseId)
+      )
     )
     .get();
 }
@@ -380,14 +383,17 @@ function getPurchaseForCourse(userId: number, courseId: number) {
     .get();
 }
 
-function getRequestedRefund(purchaseId: number) {
+function getPendingPurchaseCancellationRequest(purchaseId: number) {
   return db
-    .select({ id: refunds.id })
-    .from(refunds)
+    .select({ id: purchaseCancellationRequests.id })
+    .from(purchaseCancellationRequests)
     .where(
       and(
-        eq(refunds.purchaseId, purchaseId),
-        eq(refunds.status, RefundStatus.Requested)
+        eq(purchaseCancellationRequests.purchaseId, purchaseId),
+        eq(
+          purchaseCancellationRequests.status,
+          PurchaseCancellationRequestStatus.Requested
+        )
       )
     )
     .get();
@@ -444,14 +450,14 @@ function asDayString(when: Date) {
  * What the learner is offered if they want their money back, or null if this
  * purchase cannot be cancelled.
  */
-function getCancellationOffer(
+function getPurchaseCancellationOffer(
   userId: number,
   course: { id: number; price: number }
 ) {
   const purchase = getPurchaseForCourse(userId, course.id);
 
   if (!purchase) return null;
-  if (getRequestedRefund(purchase.id)) return null;
+  if (getPendingPurchaseCancellationRequest(purchase.id)) return null;
 
   const purchasedDay = asDayString(new Date(purchase.createdAt));
   const windowEnd = new Date(purchase.createdAt);
@@ -526,13 +532,16 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   let progress = 0;
   let lessonProgressMap: Record<number, string> = {};
   let nextLessonId: number | null = null;
-  let cancellation: { amount: number; lastDayInWindow: string } | null = null;
+  let purchaseCancellationOffer: {
+    amount: number;
+    lastDayInWindow: string;
+  } | null = null;
 
   if (currentUserId) {
     enrolled = isUserEnrolled(currentUserId, course.id);
 
     if (enrolled) {
-      cancellation = getCancellationOffer(currentUserId, {
+      purchaseCancellationOffer = getPurchaseCancellationOffer(currentUserId, {
         id: course.id,
         price: courseWithDetails.price,
       });
@@ -579,7 +588,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     tierInfo,
     ratingSummary,
     userRating,
-    cancellation,
+    purchaseCancellationOffer,
   };
 }
 
@@ -680,7 +689,7 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
     tierInfo,
     ratingSummary,
     userRating,
-    cancellation,
+    purchaseCancellationOffer,
   } = loaderData;
   const isInstructor = currentUserId === course.instructorId;
   const [searchParams, setSearchParams] = useSearchParams();
@@ -916,10 +925,10 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
                     </Button>
                   </Link>
                   <RateCourse userRating={userRating} />
-                  {cancellation && (
-                    <CancelPurchase
+                  {purchaseCancellationOffer && (
+                    <RequestPurchaseCancellation
                       slug={course.slug}
-                      amount={cancellation.amount}
+                      amount={purchaseCancellationOffer.amount}
                     />
                   )}
                 </>
@@ -993,7 +1002,13 @@ function RateCourse({ userRating }: { userRating: number | null }) {
   );
 }
 
-function CancelPurchase({ slug, amount }: { slug: string; amount: number }) {
+function RequestPurchaseCancellation({
+  slug,
+  amount,
+}: {
+  slug: string;
+  amount: number;
+}) {
   const fetcher = useFetcher<{ errors?: Record<string, string> }>();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const isSubmitting = fetcher.state !== "idle";
@@ -1024,12 +1039,13 @@ function CancelPurchase({ slug, amount }: { slug: string; amount: number }) {
     <div className="border-t pt-4">
       <p className="mb-2 text-sm font-medium">Cancel my purchase</p>
       <p className="mb-3 text-xs text-muted-foreground">
-        We will send {formatPrice(amount)} back to the card you paid with, once
-        someone has read your note.
+        Your purchase cancellation request will be reviewed by our team. If
+        approved, {formatPrice(amount)} will be returned to the card you paid
+        with.
       </p>
       <fetcher.Form
         method="post"
-        action={`/courses/${slug}/refund`}
+        action={`/courses/${slug}/purchase-cancellation`}
         className="space-y-2"
       >
         <Textarea
