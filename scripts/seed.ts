@@ -8,6 +8,7 @@ import { fileURLToPath } from "url";
 import * as schema from "../app/db/schema";
 import {
   UserRole,
+  RefundPaymentStatus,
   CourseStatus,
   LessonProgressStatus,
   RefundStatus,
@@ -77,6 +78,7 @@ async function seed() {
     DROP TABLE IF EXISTS coupons;
     DROP TABLE IF EXISTS team_members;
     DROP TABLE IF EXISTS teams;
+    DROP TABLE IF EXISTS refund_payment_events;
     DROP TABLE IF EXISTS refunds;
     DROP TABLE IF EXISTS purchases;
     DROP TABLE IF EXISTS enrollments;
@@ -111,6 +113,16 @@ async function seed() {
   // student out of a list does it by email, never by array position — see
   // studentByEmail — so appending or inserting students never silently
   // re-points a coupon redemption at someone else.
+
+  const support = db
+    .insert(schema.users)
+    .values({
+      name: "Sam Morgan",
+      email: "sam.support@ralph.dev",
+      role: UserRole.Support,
+    })
+    .returning()
+    .get();
 
   const [admin] = db
     .insert(schema.users)
@@ -223,15 +235,40 @@ async function seed() {
   // generated at the bottom of this file. Sign-up dates are spread across the
   // last twelve months, including the last few days.
   const cohortNames = [
-    "Ava Nakamura", "Noah Blackwood", "Isla Fernandes", "Ethan Okafor",
-    "Mia Lindqvist", "Lucas Moreau", "Zara Haddad", "Felix Andersen",
-    "Nina Kowalski", "Omar Rahman", "Chloe Beaumont", "Dmitri Volkov",
-    "Priya Raghavan", "Tomas Silva", "Hana Kim", "Gabriel Rossi",
-    "Amara Diallo", "Jonas Weber", "Lena Petrova", "Kwame Mensah",
-    "Sofia Ricci", "Aarav Shah", "Freya Nilsen", "Diego Castillo",
-    "Yuki Tanaka", "Rosa Delgado", "Idris Bello", "Clara Hoffmann",
-    "Mateo Alvarez", "Elif Demir", "Ruben Ortiz", "Anika Bose",
-    "Caleb Ncube", "Marta Novak",
+    "Ava Nakamura",
+    "Noah Blackwood",
+    "Isla Fernandes",
+    "Ethan Okafor",
+    "Mia Lindqvist",
+    "Lucas Moreau",
+    "Zara Haddad",
+    "Felix Andersen",
+    "Nina Kowalski",
+    "Omar Rahman",
+    "Chloe Beaumont",
+    "Dmitri Volkov",
+    "Priya Raghavan",
+    "Tomas Silva",
+    "Hana Kim",
+    "Gabriel Rossi",
+    "Amara Diallo",
+    "Jonas Weber",
+    "Lena Petrova",
+    "Kwame Mensah",
+    "Sofia Ricci",
+    "Aarav Shah",
+    "Freya Nilsen",
+    "Diego Castillo",
+    "Yuki Tanaka",
+    "Rosa Delgado",
+    "Idris Bello",
+    "Clara Hoffmann",
+    "Mateo Alvarez",
+    "Elif Demir",
+    "Ruben Ortiz",
+    "Anika Bose",
+    "Caleb Ncube",
+    "Marta Novak",
   ];
 
   const cohort = db
@@ -2059,7 +2096,9 @@ This course is still in draft while the cluster examples are rewritten against t
   markComplete(students[4].id, course1LessonIds[0], 12);
   markInProgress(students[4].id, course1LessonIds[1]);
 
-  console.log(`Created ${countRows(schema.lessonProgress)} lesson progress records.`);
+  console.log(
+    `Created ${countRows(schema.lessonProgress)} lesson progress records.`
+  );
 
   // ─── Quiz Attempts ───
 
@@ -2781,7 +2820,92 @@ This course is still in draft while the cluster examples are rewritten against t
     })
     .run();
 
-  console.log("Created Liam's Refund Request.");
+  db.insert(schema.refunds)
+    .values({
+      purchaseId: liamPurchase.id,
+      status: RefundStatus.Declined,
+      reason: "I would like to switch courses.",
+      requestedAt: daysAgo(7),
+      decisionExplanation:
+        "Please explain which course you intended to purchase.",
+      resolvedAt: daysAgo(6),
+      resolvedByUserId: support.id,
+    })
+    .run();
+
+  // Separate learners make every payment state reviewable without altering existing stories.
+  for (const [index, paymentStatus] of [
+    RefundPaymentStatus.Pending,
+    RefundPaymentStatus.Failed,
+    RefundPaymentStatus.Issued,
+  ].entries()) {
+    const learner = db
+      .insert(schema.users)
+      .values({
+        name: `Refund Demo ${index + 1}`,
+        email: `refund-demo-${index + 1}@example.com`,
+        role: UserRole.Student,
+      })
+      .returning()
+      .get();
+    const purchase = db
+      .insert(schema.purchases)
+      .values({
+        userId: learner.id,
+        courseId: course1.id,
+        amountPaid: course1.price,
+        createdAt: daysAgo(8),
+      })
+      .returning()
+      .get();
+    db.insert(schema.enrollments)
+      .values({
+        userId: learner.id,
+        courseId: course1.id,
+        enrolledAt: daysAgo(8),
+        accessRevokedAt:
+          paymentStatus === RefundPaymentStatus.Issued ? daysAgo(1) : null,
+      })
+      .run();
+    const request = db
+      .insert(schema.refunds)
+      .values({
+        purchaseId: purchase.id,
+        status: RefundStatus.Approved,
+        paymentStatus,
+        reason: "This course does not match what I need right now.",
+        requestedAt: daysAgo(5),
+        decisionExplanation: "Approved for a full refund.",
+        resolvedByUserId: support.id,
+        resolvedAt: daysAgo(3),
+        amountRefunded: purchase.amountPaid,
+      })
+      .returning()
+      .get();
+    db.insert(schema.refundPaymentEvents)
+      .values({
+        refundId: request.id,
+        actorUserId: support.id,
+        status: RefundPaymentStatus.Pending,
+        note: "Refund approved; awaiting external payment.",
+        createdAt: daysAgo(3),
+      })
+      .run();
+    if (paymentStatus !== RefundPaymentStatus.Pending)
+      db.insert(schema.refundPaymentEvents)
+        .values({
+          refundId: request.id,
+          actorUserId: support.id,
+          status: paymentStatus,
+          note:
+            paymentStatus === RefundPaymentStatus.Issued
+              ? "DEMO-PAYMENT-123"
+              : "External payment failed; awaiting retry.",
+          createdAt: daysAgo(1),
+        })
+        .run();
+  }
+  console.log("Created refund review and payment history examples.");
 
   // ─── Flush watch events ───
   // Batched: the heartbeat makes these by far the largest table, and one
@@ -2810,7 +2934,7 @@ This course is still in draft while the cluster examples are rewritten against t
 
   console.log("\n✓ Seed complete!");
   console.log(
-    `  Users: ${countRows(schema.users)} (${countRows(schema.users, eq(schema.users.role, UserRole.Admin))} admin, ${countRows(schema.users, eq(schema.users.role, UserRole.Instructor))} instructors, ${countRows(schema.users, eq(schema.users.role, UserRole.Student))} students)`
+    `  Users: ${countRows(schema.users)} (${countRows(schema.users, eq(schema.users.role, UserRole.Admin))} admin, ${countRows(schema.users, eq(schema.users.role, UserRole.Instructor))} instructors, ${countRows(schema.users, eq(schema.users.role, UserRole.Support))} support, ${countRows(schema.users, eq(schema.users.role, UserRole.Student))} students)`
   );
   console.log(`  Categories: ${countRows(schema.categories)}`);
   console.log(

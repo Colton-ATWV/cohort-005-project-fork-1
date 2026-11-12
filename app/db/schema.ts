@@ -12,6 +12,7 @@ export enum UserRole {
   Student = "student",
   Instructor = "instructor",
   Admin = "admin",
+  Support = "support",
 }
 
 export enum CourseStatus {
@@ -35,6 +36,12 @@ export enum RefundStatus {
   Open = "open",
   Approved = "approved",
   Declined = "declined",
+}
+
+export enum RefundPaymentStatus {
+  Pending = "pending",
+  Issued = "issued",
+  Failed = "failed",
 }
 
 export enum TeamMemberRole {
@@ -132,6 +139,7 @@ export const enrollments = sqliteTable(
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
     completedAt: text("completed_at"),
+    accessRevokedAt: text("access_revoked_at"),
   },
   (table) => [index("enrollments_course_idx").on(table.courseId)]
 );
@@ -249,8 +257,29 @@ export const refunds = sqliteTable(
       .$defaultFn(() => new Date().toISOString()),
     resolvedAt: text("resolved_at"),
     resolvedByUserId: integer("resolved_by_user_id").references(() => users.id),
+    decisionExplanation: text("decision_explanation"),
+    paymentStatus: text("payment_status").$type<RefundPaymentStatus>(),
   },
   (table) => [index("refunds_purchase_idx").on(table.purchaseId)]
+);
+
+export const refundPaymentEvents = sqliteTable(
+  "refund_payment_events",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    refundId: integer("refund_id")
+      .notNull()
+      .references(() => refunds.id),
+    status: text("status").notNull().$type<RefundPaymentStatus>(),
+    actorUserId: integer("actor_user_id")
+      .notNull()
+      .references(() => users.id),
+    note: text("note").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => [index("refund_payment_events_refund_idx").on(table.refundId)]
 );
 
 export const teams = sqliteTable("teams", {

@@ -1,4 +1,10 @@
-import { Form, Link, useSearchParams, useNavigation, isRouteErrorResponse } from "react-router";
+import {
+  Form,
+  Link,
+  useSearchParams,
+  useNavigation,
+  isRouteErrorResponse,
+} from "react-router";
 import type { Route } from "./+types/courses";
 import { db } from "~/db";
 import {
@@ -13,8 +19,13 @@ import {
   CourseStatus,
   LessonProgressStatus,
 } from "~/db/schema";
-import { eq, like, and, or, sql, inArray } from "drizzle-orm";
-import { Card, CardContent, CardFooter, CardHeader } from "~/components/ui/card";
+import { isNull, eq, like, and, or, sql, inArray } from "drizzle-orm";
+import {
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+} from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
 import { AlertTriangle, BookOpen, Search } from "lucide-react";
@@ -68,7 +79,10 @@ function buildCourseQuery(
     })
     .from(coursesTable)
     .innerJoin(users, eq(coursesTable.instructorId, users.id))
-    .innerJoin(categoriesTable, eq(coursesTable.categoryId, categoriesTable.id));
+    .innerJoin(
+      categoriesTable,
+      eq(coursesTable.categoryId, categoriesTable.id)
+    );
 
   if (category) {
     conditions.push(eq(categoriesTable.slug, category));
@@ -106,11 +120,7 @@ function getLessonCountForCourse(courseId: number) {
 }
 
 function getAllCategories() {
-  return db
-    .select()
-    .from(categoriesTable)
-    .orderBy(categoriesTable.name)
-    .all();
+  return db.select().from(categoriesTable).orderBy(categoriesTable.name).all();
 }
 
 function getUserEnrolledCourses(userId: number) {
@@ -127,7 +137,12 @@ function getUserEnrolledCourses(userId: number) {
     })
     .from(enrollmentsTable)
     .innerJoin(coursesTable, eq(enrollmentsTable.courseId, coursesTable.id))
-    .where(eq(enrollmentsTable.userId, userId))
+    .where(
+      and(
+        eq(enrollmentsTable.userId, userId),
+        isNull(enrollmentsTable.accessRevokedAt)
+      )
+    )
     .all();
 }
 
@@ -304,7 +319,10 @@ export async function loader({ request, url }: Route.LoaderArgs) {
     for (const enrollment of enrollments) {
       progressMap.set(enrollment.courseId, {
         progress: calculateProgress(currentUserId, enrollment.courseId, false),
-        completedLessons: getCompletedLessonCount(currentUserId, enrollment.courseId),
+        completedLessons: getCompletedLessonCount(
+          currentUserId,
+          enrollment.courseId
+        ),
       });
     }
   }
@@ -330,7 +348,13 @@ export async function loader({ request, url }: Route.LoaderArgs) {
 
   const categories = getAllCategories();
 
-  return { courses: coursesWithLessonCount, categories, search, category, currentUserId };
+  return {
+    courses: coursesWithLessonCount,
+    categories,
+    search,
+    category,
+    currentUserId,
+  };
 }
 
 function CourseCardSkeleton() {
@@ -455,11 +479,12 @@ export default function CourseCatalog({ loaderData }: Route.ComponentProps) {
                 <CardHeader>
                   <div className="mb-1 flex items-center gap-2 text-xs font-medium">
                     <span className="text-primary">{course.categoryName}</span>
-                    {currentUserId !== null && course.instructorId === currentUserId && (
-                      <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                        Your Course
-                      </span>
-                    )}
+                    {currentUserId !== null &&
+                      course.instructorId === currentUserId && (
+                        <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                          Your Course
+                        </span>
+                      )}
                   </div>
                   <h3 className="text-lg font-semibold leading-tight group-hover:text-primary">
                     {course.title}

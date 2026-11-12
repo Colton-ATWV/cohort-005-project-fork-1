@@ -1,5 +1,5 @@
 import { data } from "react-router";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull, desc, sql } from "drizzle-orm";
 import { db } from "~/db";
 import {
   UserRole,
@@ -7,6 +7,8 @@ import {
   courses,
   enrollments,
   purchases,
+  refunds,
+  RefundPaymentStatus,
 } from "~/db/schema";
 import { getCurrentUserId } from "~/lib/session";
 import { resolveCountry } from "~/lib/country.server";
@@ -25,7 +27,11 @@ function findEnrollment(userId: number, courseId: number) {
     .select()
     .from(enrollments)
     .where(
-      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
+      and(
+        eq(enrollments.userId, userId),
+        eq(enrollments.courseId, courseId),
+        isNull(enrollments.accessRevokedAt)
+      )
     )
     .get();
 }
@@ -38,7 +44,14 @@ function findPurchase(userId: number, courseId: number) {
   return db
     .select()
     .from(purchases)
-    .where(and(eq(purchases.userId, userId), eq(purchases.courseId, courseId)))
+    .where(
+      and(
+        eq(purchases.userId, userId),
+        eq(purchases.courseId, courseId),
+        sql`not exists (select 1 from ${refunds} where ${refunds.purchaseId} = ${purchases.id} and ${refunds.paymentStatus} = ${RefundPaymentStatus.Issued})`
+      )
+    )
+    .orderBy(desc(purchases.createdAt), desc(purchases.id))
     .get();
 }
 

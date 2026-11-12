@@ -4,10 +4,19 @@ Cadence sells video courses to learners. This glossary covers the language aroun
 
 ## Language
 
+### Support
+
+**Support Team Member**:
+A person authorized to approve or decline learners' Refund Requests using their judgment and the available purchase and learning history.
+Administrators also have this authority.
+
+**Refund Decision**:
+A Support Team Member's final approval or decline of an individual Refund Request, with an explanation for the learner and attribution to the person who made it.
+
 ### Refunds
 
 **Refund Request**:
-A learner's ask, with their reason, to get back what they paid for a purchase. The team approves or declines it. One purchase can have several Refund Requests over time, but only one can be undecided at once.
+A learner's ask, with their reason, to get back what they paid for a purchase. One purchase can have several Refund Requests after declines, but only one can be undecided at once and an approval prevents further requests for that purchase.
 _Avoid_: Refund (for the ask itself), Cancellation, Reversal, Chargeback
 
 **Open Refund Request**:
@@ -18,7 +27,7 @@ _Avoid_: Pending, Requested, Awaiting review
 A Refund Request the team has accepted. Approving it is what leads to a Refund.
 
 **Declined Refund Request**:
-A Refund Request the team has turned down. It has no Refund, and the learner may raise a new Refund Request.
+A Refund Request the team has turned down. It has no Refund, and the learner may raise a new Refund Request with an updated description while the earlier request retains its decision history.
 
 **Refund**:
 The money returned to a learner after their Refund Request is approved. It is always the full amount they paid. A declined Refund Request has no Refund.
@@ -34,3 +43,8 @@ _Avoid_: Completed, Paid out
 
 **Failed Refund**:
 A Refund where the money couldn't be sent. The Refund Request stays approved, because the decision hasn't changed.
+
+### Learning
+
+**Course Progress**:
+A learner's recorded advancement through a course, including completed lessons and their resume position. It is retained after a Refund Decision or Refund and resumes when the learner purchases the course again.

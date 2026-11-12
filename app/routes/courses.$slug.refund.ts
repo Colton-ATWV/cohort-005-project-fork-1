@@ -1,3 +1,4 @@
+import { createRefundRequest, RefundWorkflowError } from "~/lib/refunds.server";
 import { data, redirect } from "react-router";
 import { z } from "zod";
 import type { Route } from "./+types/courses.$slug.refund";
@@ -42,7 +43,7 @@ function getLatestPurchase(userId: number, courseId: number) {
     .select()
     .from(purchases)
     .where(and(eq(purchases.userId, userId), eq(purchases.courseId, courseId)))
-    .orderBy(sql`${purchases.createdAt} desc`)
+    .orderBy(sql`${purchases.createdAt} desc`, sql`${purchases.id} desc`)
     .get();
 }
 
@@ -57,14 +58,14 @@ function getLessonIdsForCourse(courseId: number): number[] {
   return rows.map((row) => row.id);
 }
 
-function getOpenRefundRequest(purchaseId: number) {
+function getBlockingRefundRequest(purchaseId: number) {
   return db
     .select()
     .from(refunds)
     .where(
       and(
         eq(refunds.purchaseId, purchaseId),
-        eq(refunds.status, RefundStatus.Open)
+        inArray(refunds.status, [RefundStatus.Open, RefundStatus.Approved])
       )
     )
     .get();
@@ -103,7 +104,7 @@ function buildRefundRequestEmail(input: {
       `We have your refund request for "${input.courseTitle}".`,
       `The refund is for ${formatPrice(input.amount)}, the amount you paid.`,
       "",
-      "Our team reviews every refund request by hand. You do not need to do anything else — we will email you again when it is done.",
+      "Our team reviews every refund request by hand. You do not need to do anything else — you can check the decision and payment status in Settings.",
       "",
       "— The Cadence team",
     ].join("\n"),
@@ -140,10 +141,13 @@ export async function action({ params, request }: Route.ActionArgs) {
     throw data("You have not bought this course.", { status: 403 });
   }
 
-  if (getOpenRefundRequest(purchase.id)) {
-    throw data("You already have an open refund request on this purchase.", {
-      status: 409,
-    });
+  if (getBlockingRefundRequest(purchase.id)) {
+    throw data(
+      "This purchase already has an open or approved refund request.",
+      {
+        status: 409,
+      }
+    );
   }
 
   // A seat that came out of a team licence, and has been claimed, belongs to
@@ -194,9 +198,12 @@ export async function action({ params, request }: Route.ActionArgs) {
   }
 
   if (watchedSeconds >= MAX_WATCHED_HOURS * 60 * 60) {
-    throw data("You have watched too much of this course to request a refund.", {
-      status: 403,
-    });
+    throw data(
+      "You have watched too much of this course to request a refund.",
+      {
+        status: 403,
+      }
+    );
   }
 
   const formData = await request.formData();
@@ -206,15 +213,13 @@ export async function action({ params, request }: Route.ActionArgs) {
     return data({ errors: parsed.errors }, { status: 400 });
   }
 
-  db
-    .insert(refunds)
-    .values({
-      purchaseId: purchase.id,
-      status: RefundStatus.Open,
-      reason: parsed.data.reason,
-    })
-    .returning()
-    .get();
+  try {
+    createRefundRequest(purchase.id, parsed.data.reason);
+  } catch (error) {
+    if (error instanceof RefundWorkflowError)
+      throw data(error.message, { status: error.status });
+    throw error;
+  }
 
   const email = buildRefundRequestEmail({
     learnerName: learner.name,
@@ -223,9 +228,7 @@ export async function action({ params, request }: Route.ActionArgs) {
     amount: purchase.amountPaid,
   });
 
-  console.log(
-    `[email] to=${email.to} subject=${email.subject}\n${email.body}`
-  );
+  console.log(`[email] to=${email.to} subject=${email.subject}\n${email.body}`);
 
   return redirect("/settings");
 }

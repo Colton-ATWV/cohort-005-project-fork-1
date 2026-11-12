@@ -13,6 +13,7 @@ import { Textarea } from "~/components/ui/textarea";
 import {
   UserRole,
   RefundStatus,
+  RefundPaymentStatus,
   users,
   courses,
   purchases,
@@ -21,7 +22,7 @@ import {
 import { AlertTriangle } from "lucide-react";
 import { data, isRouteErrorResponse, Link } from "react-router";
 import { db } from "~/db";
-import { and, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { formatPrice } from "~/lib/utils";
 
 const settingsSchema = z.object({
@@ -55,7 +56,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     throw data("User not found.", { status: 404 });
   }
 
-  const openRefundRequests = db
+  const refundRequests = db
     .select({
       id: refunds.id,
       courseTitle: courses.title,
@@ -63,16 +64,16 @@ export async function loader({ request }: Route.LoaderArgs) {
       amountPaid: purchases.amountPaid,
       reason: refunds.reason,
       requestedAt: refunds.requestedAt,
+      status: refunds.status,
+      paymentStatus: refunds.paymentStatus,
+      explanation: refunds.decisionExplanation,
+      resolvedAt: refunds.resolvedAt,
     })
     .from(refunds)
     .innerJoin(purchases, eq(refunds.purchaseId, purchases.id))
     .innerJoin(courses, eq(purchases.courseId, courses.id))
-    .where(
-      and(
-        eq(purchases.userId, currentUserId),
-        eq(refunds.status, RefundStatus.Open)
-      )
-    )
+    .where(eq(purchases.userId, currentUserId))
+    .orderBy(desc(refunds.requestedAt), desc(refunds.id))
     .all();
 
   return {
@@ -83,7 +84,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       bio: currentUser.bio,
       role: currentUser.role,
     },
-    openRefundRequests,
+    refundRequests,
   };
 }
 
@@ -112,8 +113,7 @@ export async function action({ request }: Route.ActionArgs) {
 
   const { name, bio } = parsed.data;
 
-  db
-    .update(users)
+  db.update(users)
     .set({ name, email: currentUser.email, bio: bio || null })
     .where(eq(users.id, currentUser.id))
     .returning()
@@ -122,7 +122,7 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function Settings({ loaderData }: Route.ComponentProps) {
-  const { user, openRefundRequests } = loaderData;
+  const { user, refundRequests } = loaderData;
   const fetcher = useFetcher();
   const nameInputRef = useRef<HTMLInputElement>(null);
 
@@ -131,7 +131,8 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
       toast.success("Profile updated successfully.");
     }
     if (fetcher.state === "idle" && fetcher.data?.errors) {
-      const firstError = Object.values(fetcher.data.errors)[0] as string | undefined;
+      const firstError = Object.values(fetcher.data.errors)[0] as
+        string | undefined;
       if (firstError) toast.error(firstError);
     }
   }, [fetcher.state, fetcher.data]);
@@ -199,28 +200,23 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
                 </p>
               </div>
             )}
-            <Button
-              type="submit"
-              disabled={fetcher.state !== "idle"}
-            >
+            <Button type="submit" disabled={fetcher.state !== "idle"}>
               {fetcher.state !== "idle" ? "Saving..." : "Save Changes"}
             </Button>
           </fetcher.Form>
         </CardContent>
       </Card>
 
-      {openRefundRequests.length > 0 && (
+      {refundRequests.length > 0 && (
         <Card className="mt-8 max-w-md">
           <CardHeader>
             <h2 className="text-lg font-semibold">Refund Requests</h2>
             <p className="text-sm text-muted-foreground">
-              {openRefundRequests.length === 1
-                ? "One refund request is waiting on us."
-                : `${openRefundRequests.length} refund requests are waiting on us.`}
+              Your request history, decisions, and payment status.
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            {openRefundRequests.map((refundRequest) => (
+            {refundRequests.map((refundRequest) => (
               <div key={refundRequest.id} className="rounded-md border p-3">
                 <div className="flex items-start justify-between gap-3">
                   <Link
@@ -230,14 +226,50 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
                     {refundRequest.courseTitle}
                   </Link>
                   <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
-                    Open
+                    {refundRequest.status === RefundStatus.Open
+                      ? "Open"
+                      : refundRequest.status === RefundStatus.Approved
+                        ? "Approved"
+                        : "Declined"}
                   </span>
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {formatPrice(refundRequest.amountPaid)} · raised{" "}
                   {new Date(refundRequest.requestedAt).toLocaleDateString()}
                 </p>
-                <p className="mt-2 text-sm">{refundRequest.reason}</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm">
+                  {refundRequest.reason}
+                </p>
+                {refundRequest.explanation && (
+                  <div className="mt-3 border-t pt-3">
+                    <p className="text-sm font-medium">Our decision</p>
+                    <p className="whitespace-pre-wrap text-sm">
+                      {refundRequest.explanation}
+                    </p>
+                    {refundRequest.resolvedAt && (
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(refundRequest.resolvedAt).toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {refundRequest.paymentStatus && (
+                  <p className="mt-2 text-sm">
+                    {refundRequest.paymentStatus === RefundPaymentStatus.Issued
+                      ? "Refund issued. Your progress is saved if you purchase this course again. Any access from another valid purchase continues."
+                      : refundRequest.paymentStatus ===
+                          RefundPaymentStatus.Failed
+                        ? "Refund payment failed. Your request remains approved, and your course access continues while our team resolves payment."
+                        : "Refund pending. Your course access continues until payment is confirmed."}
+                  </p>
+                )}
+                {refundRequest.status === RefundStatus.Declined && (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    You may submit a new request with an updated description
+                    from the course page, subject to the existing eligibility
+                    rules.
+                  </p>
+                )}
               </div>
             ))}
           </CardContent>
@@ -260,12 +292,10 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
           : "Please select a user from the DevUI panel.";
     } else if (error.status === 404) {
       title = "User not found";
-      message =
-        typeof error.data === "string" ? error.data : "User not found.";
+      message = typeof error.data === "string" ? error.data : "User not found.";
     } else {
       title = `Error ${error.status}`;
-      message =
-        typeof error.data === "string" ? error.data : error.statusText;
+      message = typeof error.data === "string" ? error.data : error.statusText;
     }
   }
 

@@ -51,6 +51,12 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   {
+    label: "Refund Requests",
+    to: "/support/refunds",
+    icon: <Shield className="size-4" />,
+    roles: [UserRole.Support, UserRole.Admin],
+  },
+  {
     label: "Browse Courses",
     to: "/courses",
     icon: <BookOpen className="size-4" />,

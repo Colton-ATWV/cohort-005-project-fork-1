@@ -9,7 +9,7 @@ import {
   lessons,
   enrollments,
 } from "~/db/schema";
-import { eq, and, or } from "drizzle-orm";
+import { eq, and, or, isNull } from "drizzle-orm";
 import { getCurrentUserId } from "~/lib/session";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent } from "~/components/ui/card";
@@ -82,7 +82,11 @@ function isUserEnrolled(userId: number, courseId: number) {
     .select()
     .from(enrollments)
     .where(
-      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
+      and(
+        eq(enrollments.userId, userId),
+        eq(enrollments.courseId, courseId),
+        isNull(enrollments.accessRevokedAt)
+      )
     )
     .get();
   return !!enrollment;
@@ -157,11 +161,7 @@ export default function Welcome({ loaderData }: Route.ComponentProps) {
                 rel="noopener noreferrer"
                 className="block"
               >
-                <Button
-                  variant="outline"
-                  size="lg"
-                  className="w-full max-w-sm"
-                >
+                <Button variant="outline" size="lg" className="w-full max-w-sm">
                   <MessageCircle className="mr-2 size-5" />
                   Join the Discord Community
                 </Button>

@@ -1,3 +1,4 @@
+import { purchaseHasIssuedRefund } from "~/lib/refunds.server";
 import { Link, useFetcher, redirect } from "react-router";
 import { useEffect } from "react";
 import { toast } from "sonner";
@@ -12,14 +13,17 @@ import { Ticket, AlertCircle, CheckCircle2, Globe } from "lucide-react";
 import { data } from "react-router";
 import { db } from "~/db";
 import { purchases, coupons, courses, enrollments } from "~/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 
 function getCourseById(id: number) {
   return db.select().from(courses).where(eq(courses.id, id)).get();
 }
 
 function getCouponByCode(code: string) {
-  return db.select().from(coupons).where(eq(coupons.code, code)).get();
+  const coupon = db.select().from(coupons).where(eq(coupons.code, code)).get();
+  return coupon && !purchaseHasIssuedRefund(coupon.purchaseId)
+    ? coupon
+    : undefined;
 }
 
 function isUserEnrolled(userId: number, courseId: number) {
@@ -27,7 +31,11 @@ function isUserEnrolled(userId: number, courseId: number) {
     .select()
     .from(enrollments)
     .where(
-      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
+      and(
+        eq(enrollments.userId, userId),
+        eq(enrollments.courseId, courseId),
+        isNull(enrollments.accessRevokedAt)
+      )
     )
     .get();
 
@@ -58,7 +66,8 @@ function redeemCoupon(
     .where(
       and(
         eq(enrollments.userId, userId),
-        eq(enrollments.courseId, coupon.courseId)
+        eq(enrollments.courseId, coupon.courseId),
+        isNull(enrollments.accessRevokedAt)
       )
     )
     .get();
@@ -89,9 +98,24 @@ function redeemCoupon(
     .where(eq(coupons.id, coupon.id))
     .run();
 
+  const previous = db
+    .select()
+    .from(enrollments)
+    .where(
+      and(
+        eq(enrollments.userId, userId),
+        eq(enrollments.courseId, coupon.courseId)
+      )
+    )
+    .all()
+    .find((row) => row.completedAt !== null);
   const enrollment = db
     .insert(enrollments)
-    .values({ userId, courseId: coupon.courseId })
+    .values({
+      userId,
+      courseId: coupon.courseId,
+      completedAt: previous?.completedAt ?? null,
+    })
     .returning()
     .get();
 
